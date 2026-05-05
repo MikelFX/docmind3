@@ -366,3 +366,55 @@
 }
 .questionBtn:hover { background: #2a2450; }
 .questionBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* HISTORY */
+.historyItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+  width: 100%;
+  text-align: left;
+  transition: background 0.1s;
+}
+.historyItem:hover { background: #13111f; }
+
+.historyName {
+  font-size: 12px;
+  color: #c8c4e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.historyMeta {
+  font-size: 10px;
+  color: #444;
+}
+
+/* RESULT ACTIONS */
+.resultActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.actionBtn {
+  font-size: 11px;
+  font-family: inherit;
+  background: #1a1730;
+  border: 0.5px solid #2a2450;
+  border-radius: 5px;
+  padding: 3px 10px;
+  color: #AFA9EC;
+  cursor: pointer;
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+.actionBtn:hover { background: #2a2450; }

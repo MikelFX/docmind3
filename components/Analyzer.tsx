@@ -1,10 +1,18 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import styles from './Analyzer.module.css'
 
 type Mode = 'summary' | 'actions' | 'risks' | 'qa'
+
+interface HistoryItem {
+  id: string
+  fileName: string
+  mode: Mode
+  result: string
+  date: string
+}
 
 const MODES: { id: Mode; label: string; icon: string }[] = [
   { id: 'summary', label: 'Shrnutí', icon: '📋' },
@@ -21,6 +29,10 @@ Rizika: závislost na externím dodavateli, možné zpoždění o 2-3 týdny.
 Rozpočet: 450 000 Kč, aktuálně proinvestováno 280 000 Kč.
 Závěr: projekt je v plánu, nutné sledovat rizika dodavatele.`
 
+function stripHtml(html: string) {
+  return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+}
+
 export default function Analyzer() {
   const [mode, setMode] = useState<Mode>('summary')
   const [fileContent, setFileContent] = useState('')
@@ -30,11 +42,40 @@ export default function Analyzer() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState('')
   const [credits, setCredits] = useState(3)
-  const router = useRouter()
   const [question, setQuestion] = useState('')
   const [qLoading, setQLoading] = useState(false)
   const [answers, setAnswers] = useState<{ q: string; a: string }[]>([])
+  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [copied, setCopied] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const router = useRouter()
+
+  useEffect(() => {
+    const saved = localStorage.getItem('docmind_history')
+    if (saved) setHistory(JSON.parse(saved))
+    const savedCredits = localStorage.getItem('docmind_credits')
+    if (savedCredits) setCredits(parseInt(savedCredits))
+  }, [])
+
+  function saveToHistory(res: string, fname: string, m: Mode) {
+    const item: HistoryItem = {
+      id: Date.now().toString(),
+      fileName: fname || 'demo text',
+      mode: m,
+      result: res,
+      date: new Date().toLocaleDateString('cs-CZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
+    }
+    const updated = [item, ...history].slice(0, 5)
+    setHistory(updated)
+    localStorage.setItem('docmind_history', JSON.stringify(updated))
+  }
+
+  function loadFromHistory(item: HistoryItem) {
+    setResult(item.result)
+    setMode(item.mode)
+    setFileName(item.fileName)
+    setAnswers([])
+  }
 
   function handleFile(file: File) {
     setFileName(file.name)
@@ -54,10 +95,12 @@ export default function Analyzer() {
 
   async function analyze() {
     if (credits <= 0) {
-      alert('Nemáš kredity. Kupte balíček.')
+      router.push('/koupit')
       return
     }
-    setCredits((c) => c - 1)
+    const newCredits = credits - 1
+    setCredits(newCredits)
+    localStorage.setItem('docmind_credits', newCredits.toString())
     setLoading(true)
     setResult('')
     setAnswers([])
@@ -71,9 +114,12 @@ export default function Analyzer() {
       const data = await res.json()
       if (data.error) throw new Error(data.error)
       setResult(data.result)
+      saveToHistory(data.result, fileName, mode)
     } catch (err) {
       setResult('<p style="color:#F09595">Chyba při analýze. Zkus znovu.</p>')
-      setCredits((c) => c + 1)
+      const restored = credits
+      setCredits(restored)
+      localStorage.setItem('docmind_credits', restored.toString())
     } finally {
       setLoading(false)
     }
@@ -109,9 +155,75 @@ export default function Analyzer() {
     }
   }
 
+  function copyResult() {
+    const text = stripHtml(result) + answers.map(a => `\n\nQ: ${a.q}\nA: ${a.a}`).join('')
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  function exportTxt() {
+    const modeLabel = MODES.find(m => m.id === mode)?.label || mode
+    const text = [
+      `DocMind — ${modeLabel}`,
+      `Soubor: ${fileName || 'demo text'}`,
+      `Datum: ${new Date().toLocaleDateString('cs-CZ')}`,
+      `${'─'.repeat(40)}`,
+      stripHtml(result),
+      ...answers.map(a => `\nQ: ${a.q}\nA: ${a.a}`)
+    ].join('\n')
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `docmind-${modeLabel}-${Date.now()}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  function exportPdf() {
+    const modeLabel = MODES.find(m => m.id === mode)?.label || mode
+    const answersHtml = answers.map(a =>
+      `<div style="margin-top:16px;padding:12px;background:#f5f5f5;border-radius:6px">
+        <strong style="color:#7F77DD">Q: ${a.q}</strong><br>${a.a}
+      </div>`
+    ).join('')
+
+    const win = window.open('', '_blank')
+    if (!win) return
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>DocMind — ${modeLabel}</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; color: #1a1a1a; line-height: 1.7; }
+          .header { border-bottom: 2px solid #7F77DD; padding-bottom: 12px; margin-bottom: 24px; }
+          .logo { color: #7F77DD; font-size: 20px; font-weight: bold; }
+          .meta { color: #888; font-size: 13px; margin-top: 4px; }
+          h4 { color: #534AB7; margin: 16px 0 6px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="logo">● docmind</div>
+          <div class="meta">${modeLabel} · ${fileName || 'demo text'} · ${new Date().toLocaleDateString('cs-CZ')}</div>
+        </div>
+        ${result}
+        ${answersHtml}
+      </body>
+      </html>
+    `)
+    win.document.close()
+    setTimeout(() => { win.print(); win.close() }, 500)
+  }
+
+  const currentModeLabel = MODES.find(m => m.id === mode)?.label || ''
+
   return (
     <div className={styles.wrap}>
-      {/* NAV */}
       <nav className={styles.nav}>
         <div className={styles.logo}>
           <div className={styles.logoDot} />
@@ -125,9 +237,7 @@ export default function Analyzer() {
         </div>
       </nav>
 
-      {/* MAIN */}
       <div className={styles.main}>
-        {/* SIDEBAR */}
         <aside className={styles.sidebar}>
           <div className={styles.sidebarLabel}>Režim analýzy</div>
           {MODES.map((m) => (
@@ -140,13 +250,33 @@ export default function Analyzer() {
               {m.label}
             </button>
           ))}
-          <div className={styles.sidebarLabel} style={{ marginTop: 24 }}>Nedávné</div>
-          <div className={styles.recentEmpty}>žádné dokumenty</div>
+
+          {history.length > 0 && (
+            <>
+              <div className={styles.sidebarLabel} style={{ marginTop: 24 }}>Historie</div>
+              {history.map((item) => (
+                <button
+                  key={item.id}
+                  className={styles.historyItem}
+                  onClick={() => loadFromHistory(item)}
+                  title={item.fileName}
+                >
+                  <span className={styles.historyName}>{item.fileName}</span>
+                  <span className={styles.historyMeta}>{item.date}</span>
+                </button>
+              ))}
+            </>
+          )}
+
+          {history.length === 0 && (
+            <>
+              <div className={styles.sidebarLabel} style={{ marginTop: 24 }}>Historie</div>
+              <div className={styles.recentEmpty}>žádné dokumenty</div>
+            </>
+          )}
         </aside>
 
-        {/* CONTENT */}
         <div className={styles.content}>
-          {/* UPLOAD */}
           <div
             className={`${styles.upload} ${dragging ? styles.uploadDrag : ''}`}
             onClick={() => fileRef.current?.click()}
@@ -173,7 +303,6 @@ export default function Analyzer() {
             />
           </div>
 
-          {/* FILE BAR */}
           {fileName && (
             <div className={styles.fileBar}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7F77DD" strokeWidth="1.5">
@@ -186,12 +315,9 @@ export default function Analyzer() {
             </div>
           )}
 
-          {/* ANALYZE BUTTON */}
           <button className={styles.analyzeBtn} onClick={analyze} disabled={loading}>
             {loading ? (
-              <span className={styles.loadingDots}>
-                <span /><span /><span />
-              </span>
+              <span className={styles.loadingDots}><span /><span /><span /></span>
             ) : (
               <>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -202,13 +328,28 @@ export default function Analyzer() {
             )}
           </button>
 
-          {/* RESULT */}
           {(result || loading) && (
             <div className={styles.resultBox}>
               <div className={styles.resultHeader}>
-                <span className={styles.resultLabel}>{MODES.find(m => m.id === mode)?.label}</span>
-                <span className={styles.resultMeta}>{fileName || 'demo text'}</span>
+                <span className={styles.resultLabel}>{currentModeLabel}</span>
+                <div className={styles.resultActions}>
+                  {result && !loading && (
+                    <>
+                      <button className={styles.actionBtn} onClick={copyResult}>
+                        {copied ? '✓ Zkopírováno' : 'Kopírovat'}
+                      </button>
+                      <button className={styles.actionBtn} onClick={exportTxt}>
+                        TXT
+                      </button>
+                      <button className={styles.actionBtn} onClick={exportPdf}>
+                        PDF
+                      </button>
+                    </>
+                  )}
+                  <span className={styles.resultMeta}>{fileName || 'demo text'}</span>
+                </div>
               </div>
+
               <div className={styles.resultBody}>
                 {loading ? (
                   <div className={styles.loadingRow}>
@@ -219,16 +360,16 @@ export default function Analyzer() {
                   <div dangerouslySetInnerHTML={{ __html: result }} />
                 )}
 
-                {/* Follow-up odpovědi */}
                 {answers.map((a, i) => (
                   <div key={i} className={styles.answerCard}>
                     <p className={styles.answerQ}>{a.q}</p>
-                    <p className={styles.answerA}>{a.a}</p>
+                    <p className={styles.answerA}>{a.a === '...' ? (
+                      <span style={{ color: '#555' }}>načítám...</span>
+                    ) : a.a}</p>
                   </div>
                 ))}
               </div>
 
-              {/* QUESTION BAR */}
               {result && !loading && (
                 <div className={styles.questionBar}>
                   <input
@@ -236,7 +377,8 @@ export default function Analyzer() {
                     placeholder="Zeptej se na cokoliv v dokumentu..."
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && askQuestion()}
+                    onKeyDown={(e) => e.key === 'Enter' && !qLoading && askQuestion()}
+                    disabled={qLoading}
                   />
                   <button className={styles.questionBtn} onClick={askQuestion} disabled={qLoading}>
                     {qLoading ? '...' : 'Zeptat se →'}
