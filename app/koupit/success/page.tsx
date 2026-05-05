@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import styles from './page.module.css'
 
-export default function SuccessPage() {
+function SuccessContent() {
   const params = useSearchParams()
   const router = useRouter()
   const credits = parseInt(params.get('credits') || '0')
@@ -25,7 +25,7 @@ export default function SuccessPage() {
         <div className={styles.icon}>✅</div>
         <h1 className={styles.title}>Platba proběhla úspěšně!</h1>
         <p className={styles.sub}>
-          Bylo ti připsáno <strong>{credits} kreditů</strong>.
+          Bylo ti připsáno <strong>{credits} kreditů</strong>.{' '}
           Celkem máš nyní <strong>{total} kreditů</strong>.
         </p>
         <button className={styles.btn} onClick={() => router.push('/')}>
@@ -33,5 +33,17 @@ export default function SuccessPage() {
         </button>
       </div>
     </div>
+  )
+}
+
+export default function SuccessPage() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: '100vh', background: '#0a0a0f', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
+        Načítám...
+      </div>
+    }>
+      <SuccessContent />
+    </Suspense>
   )
 }
