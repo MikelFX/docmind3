@@ -27,65 +27,110 @@ Formát: <div style="margin-bottom:16px;padding:12px;background:#13111f;border-r
 Česky. Vrať POUZE HTML fragmenty, žádný markdown.`,
 }
 
-export async function POST(req: NextRequest) {
-  const apiKey = process.env.OPENROUTER_API_KEY
+const TIMEOUT_MS = 30_000
+const MAX_RETRIES = 3
 
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: 'Chybí OPENROUTER_API_KEY v .env.local' },
-      { status: 500 }
-    )
-  }
+async function callOpenRouter(body: object, apiKey: string, attempt = 1): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
-  const { content, mode, question } = await req.json()
-
-  if (!content) {
-    return NextResponse.json({ error: 'Chybí obsah dokumentu' }, { status: 400 })
-  }
-
-  const systemPrompt = question
-    ? 'Jsi analytický asistent. Odpovídáš stručně a věcně česky.'
-    : 'Jsi analytický asistent. Odpovídáš POUZE jako HTML fragmenty. Žádný markdown, žádné backticky, žádný DOCTYPE. Žádné ```html bloky.'
-
-  const userMessage = question
-    ? `Na základě dokumentu odpověz na: "${question}"\n\nDOKUMENT:\n${content.slice(0, 2000)}\n\nOdpověz stručně česky.`
-    : PROMPTS[mode as Mode] + '\n\nDOKUMENT:\n' + content.slice(0, 3000)
-
+  let response: Response
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://docmind.app',
+        'HTTP-Referer': 'http://localhost:3000',
         'X-Title': 'DocMind',
       },
-      body: JSON.stringify({
-        model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
-        max_tokens: 1024,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
-        ],
-      }),
+      body: JSON.stringify(body),
+      signal: controller.signal,
     })
-
-    const data = await response.json()
-
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: data.error?.message || 'Chyba OpenRouter API' },
-        { status: response.status }
-      )
+  } catch (err: any) {
+    clearTimeout(timer)
+    if (err.name === 'AbortError') {
+      throw new Error('Časový limit vypršel (30s). Zkus to znovu.')
     }
+    if (attempt < MAX_RETRIES) {
+      await new Promise(r => setTimeout(r, 1000 * attempt))
+      return callOpenRouter(body, apiKey, attempt + 1)
+    }
+    throw new Error('Nepodařilo se spojit s AI serverem.')
+  }
+  clearTimeout(timer)
 
-    let result = data.choices?.[0]?.message?.content || ''
+  const data = await response.json()
 
-    // Llama někdy vrátí markdown bloky i přes instrukce — vyčistíme
-    result = result.replace(/```html/gi, '').replace(/```/g, '').trim()
+  if (response.status === 429) {
+    if (attempt < MAX_RETRIES) {
+      await new Promise(r => setTimeout(r, 2000 * attempt))
+      return callOpenRouter(body, apiKey, attempt + 1)
+    }
+    throw new Error('Překročen limit požadavků. Počkej chvíli a zkus znovu.')
+  }
 
+  if (response.status === 401) {
+    throw new Error('Neplatný API klíč. Zkontroluj OPENROUTER_API_KEY.')
+  }
+
+  if (!response.ok) {
+    const msg = data.error?.message || `Chyba serveru (${response.status})`
+    if (attempt < MAX_RETRIES) {
+      await new Promise(r => setTimeout(r, 1000 * attempt))
+      return callOpenRouter(body, apiKey, attempt + 1)
+    }
+    throw new Error(msg)
+  }
+
+  let result: string = data.choices?.[0]?.message?.content ?? ''
+  result = result.replace(/```html/gi, '').replace(/```/g, '').trim()
+
+  if (!result) throw new Error('AI vrátilo prázdnou odpověď. Zkus znovu.')
+
+  return result
+}
+
+export async function POST(req: NextRequest) {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  if (!apiKey) {
+    return NextResponse.json({ error: 'Chybí OPENROUTER_API_KEY v .env.local' }, { status: 500 })
+  }
+
+  let body: { content?: string; mode?: string; question?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Neplatný požadavek.' }, { status: 400 })
+  }
+
+  const { content, mode, question } = body
+  if (!content) {
+    return NextResponse.json({ error: 'Chybí obsah dokumentu.' }, { status: 400 })
+  }
+
+  const systemPrompt = question
+    ? 'Jsi analytický asistent. Odpovídáš stručně a věcně česky.'
+    : 'Jsi analytický asistent. Odpovídáš POUZE jako HTML fragmenty. Žádný markdown, žádné backticky, žádný DOCTYPE.'
+
+  const userMessage = question
+    ? `Na základě dokumentu odpověz na: "${question}"\n\nDOKUMENT:\n${content.slice(0, 2000)}\n\nOdpověz stručně česky.`
+    : PROMPTS[(mode as Mode) ?? 'summary'] + '\n\nDOKUMENT:\n' + content.slice(0, 3000)
+
+  const requestBody = {
+    model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+    max_tokens: 1024,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
+    ],
+  }
+
+  try {
+    const result = await callOpenRouter(requestBody, apiKey)
     return NextResponse.json({ result })
-  } catch (err) {
-    return NextResponse.json({ error: 'Síťová chyba' }, { status: 500 })
+  } catch (err: any) {
+    console.error('[DocMind] API error:', err.message)
+    return NextResponse.json({ error: err.message }, { status: 502 })
   }
 }

@@ -139,7 +139,8 @@ export default function Analyzer() {
       setResult(data.result)
       saveToHistory(data.result, fileName, mode)
     } catch (err) {
-      setResult('<p style="color:#F09595">Chyba při analýze. Zkus znovu.</p>')
+      const errMsg = (err instanceof Error && err.message) ? err.message : 'Chyba při analýze. Zkus znovu.'
+      setResult(`<p style="color:#F09595;font-size:13px">${errMsg}</p>`)
       const restored = credits
       setCredits(restored)
       localStorage.setItem('docmind_credits', restored.toString())
