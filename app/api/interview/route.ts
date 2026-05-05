@@ -11,7 +11,7 @@ async function callOpenRouter(messages: object[], apiKey: string, attempt = 1): 
     response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': 'http://localhost:3000', 'X-Title': 'DocMind' },
-      body: JSON.stringify({ model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', max_tokens: 1024, messages }),
+      body: JSON.stringify({ model: 'openrouter/auto', max_tokens: 1024, messages }),
       signal: controller.signal,
     })
   } catch (err: any) {
@@ -46,9 +46,12 @@ Ptáš se vždy NA JEDNU otázku. Jakmile máš dostatek informací, vrať kompl
 Pokud uživatel odpoví na všechny potřebné otázky, napiš "DOKUMENT_HOTOV:" a za tím celý dokument.
 Jinak napiš pouze další otázku.`
 
+  // Drz jen poslednich 8 zprav aby se neprekrocil kontext modelu
+  const trimmedHistory = (history || []).slice(-8)
+
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...(history || []),
+    ...trimmedHistory,
     ...(userAnswer ? [{ role: 'user', content: userAnswer }] : []),
     ...(!history?.length ? [{ role: 'user', content: `Začni rozhovor pro vytvoření: ${docType}` }] : []),
   ]
