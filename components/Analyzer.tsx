@@ -77,13 +77,36 @@ export default function Analyzer() {
     setAnswers([])
   }
 
-  function handleFile(file: File) {
+  async function handleFile(file: File) {
     setFileName(file.name)
     const kb = Math.round(file.size / 1024)
     setFileSize(kb > 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb + ' KB')
-    const reader = new FileReader()
-    reader.onload = (e) => setFileContent(e.target?.result as string)
-    reader.readAsText(file)
+
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      try {
+        const pdfjsLib = await import('pdfjs-dist')
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
+        const arrayBuffer = await file.arrayBuffer()
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+        let fullText = ''
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i)
+          const textContent = await page.getTextContent()
+          const pageText = textContent.items
+            .map((item: any) => ('str' in item ? item.str : ''))
+            .join(' ')
+          fullText += pageText + '
+'
+        }
+        setFileContent(fullText.trim() || 'PDF neobsahuje čitelný text.')
+      } catch (err) {
+        setFileContent('Nepodařilo se načíst PDF. Zkus TXT nebo Word.')
+      }
+    } else {
+      const reader = new FileReader()
+      reader.onload = (e) => setFileContent(e.target?.result as string)
+      reader.readAsText(file)
+    }
   }
 
   function onDrop(e: React.DragEvent) {
